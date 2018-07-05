@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2014 Tobias Brunner
+ * Copyright (C) 2006-2018 Tobias Brunner
  * Copyright (C) 2005-2010 Martin Willi
  * Copyright (C) 2010 revosec AG
  * Copyright (C) 2006 Daniel Roethlisberger
@@ -2842,9 +2842,11 @@ METHOD(message_t, add_fragment_v2, status_t,
 	encrypted_fragment_payload_t *encrypted_fragment;
 	encrypted_payload_t *encrypted;
 	payload_t *payload;
+	aead_t *aead;
 	enumerator_t *enumerator;
 	chunk_t data;
 	uint16_t total, num;
+	size_t len;
 	status_t status;
 
 	if (!this->frag)
@@ -2905,10 +2907,25 @@ METHOD(message_t, add_fragment_v2, status_t,
 	}
 
 	data = merge_fragments(this, message);
-	DBG1(DBG_ENC, "received fragment #%hu of %hu, reassembled fragmented IKE "
-		 "message (%zu bytes)", num, total, data.len);
 
+	encrypted = (encrypted_payload_t*)encrypted_fragment;
+	aead = encrypted->get_transform(encrypted);
 	encrypted = encrypted_payload_create_from_plain(this->first_payload, data);
+	encrypted->set_transform(encrypted, aead);
+	/* we report the complete IKE message when splitting, do the same here,
+	 * so add the IKEv2 header to the reassembled payload data */
+	len = 28 + encrypted->get_length(encrypted);
+	/* add the length of any unencrypted payloads */
+	enumerator = create_payload_enumerator(this);
+	while (enumerator->enumerate(enumerator, &payload))
+	{
+		len += payload->get_length(payload);
+	}
+	enumerator->destroy(enumerator);
+
+	DBG1(DBG_ENC, "received fragment #%hu of %hu, reassembled fragmented IKE "
+		 "message (%zu bytes)", num, total, len);
+
 	this->payloads->insert_last(this->payloads, encrypted);
 	/* update next payload type (could be an unencrypted payload) */
 	this->payloads->get_first(this->payloads, (void**)&payload);
